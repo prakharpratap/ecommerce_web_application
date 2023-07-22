@@ -22,6 +22,17 @@ const cartSchema = new mongoose.Schema({
     default: 1,
   },
 });
+const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    required: true,
+  },
+  password: {
+    type: String,
+    required: true,
+  },
+});
 
 module.exports.productModel = mongoose.model("Product", productSchema);
 module.exports.cartModel = mongoose.model("Cart", cartSchema);
+module.exports.userModel = mongoose.model("User", userSchema);
