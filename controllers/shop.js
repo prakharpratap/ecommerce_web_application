@@ -1,116 +1,248 @@
-const addToCart = require("../models/product");
-const { productModel } = require("../models/connection");
-const { cartModel } = require("../models/connection");
-const { findAllFromCart } = require("../models/cart");
-const { fetchDetailProduct } = require("../models/product");
-const { findByIdCart } = require("../models/cart");
-exports.getIndex = async (req, res, next) => {
-  const result = await addToCart.fetchAll(req, res, next);
-  res.render("./shop/index", {
-    prods: result,
-    pageTitle: "Shop",
-    path: "/",
-  });
-};
-exports.getProducts = async (req, res, next) => {
-  const result = await addToCart.fetchAll(req, res, next);
-  res.render("./shop/product-list", {
-    prods: result,
-    pageTitle: "All Products",
-    path: "/products",
-  });
-};
+const fs = require('fs');
+const path = require('path');
 
-exports.getCart = async (req, res, next) => {
-  //   console.log("inside getCart");
-  const cartProducts = await findAllFromCart(req, res, next);
-  //   console.log(typeof cartProducts);
-  //   console.log(cartProducts);
-  res.render("shop/cart", {
-    path: "/cart",
-    pageTitle: "Your Cart",
-    products: cartProducts,
-  });
-};
+const PDFDocument = require('pdfkit');
 
-exports.postCart = async (req, res, next) => {
-  //   console.log("inside postCart");
-  const productId = req.body.productId;
-  const product = await productModel.findById(productId);
-  //   console.log(product);
-  //   console.log(productId);
-  const duplicate = await cartModel.findById(productId);
+const Product = require('../models/product');
+const Order = require('../models/order');
 
-  if (duplicate) {
-    // console.log("inside duplicate");
-    // console.log(duplicate.quantity + 1);
-    duplicate.quantity = duplicate.quantity + 1 || 1;
-    await duplicate.save();
-  } else {
-    let cartProduct = new cartModel({
-      _id: product._id,
-      title: product.title,
-      imageUrl: product.imageUrl,
-      description: product.description,
-      price: product.price,
+const ITEMS_PER_PAGE = 2;
+
+exports.getProducts = (req, res, next) => {
+  const page = +req.query.page || 1;
+  let totalItems;
+
+  Product.find()
+    .countDocuments()
+    .then(numProducts => {
+      totalItems = numProducts;
+      return Product.find()
+        .skip((page - 1) * ITEMS_PER_PAGE)
+        .limit(ITEMS_PER_PAGE);
+    })
+    .then(products => {
+      res.render('shop/product-list', {
+        prods: products,
+        pageTitle: 'Products',
+        path: '/products',
+        currentPage: page,
+        hasNextPage: ITEMS_PER_PAGE * page < totalItems,
+        hasPreviousPage: page > 1,
+        nextPage: page + 1,
+        previousPage: page - 1,
+        lastPage: Math.ceil(totalItems / ITEMS_PER_PAGE)
+      });
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
     });
-    let result = await cartProduct.save();
-  }
-
-  //   console.log("-----------------------------------");
-  //   console.log(result);
-  //   console.log(typeof result.quantity);
-  res.redirect("/cart");
 };
 
-exports.postCartDeleteProduct = async (req, res, next) => {
-  //   console.log("inside postcardeleteitem");
-  const product = await findByIdCart(req, res, next);
-  //   console.log(product);
-  if (product.quantity > 1) {
-    // console.log("inside if");
-    product.quantity--;
-    const data = await product.save();
-  } else {
-    // console.log("inside else");
-    const data = await cartModel.deleteOne({ _id: product._id });
-  }
-  res.redirect("/cart");
+exports.getProduct = (req, res, next) => {
+  const prodId = req.params.productId;
+  Product.findById(prodId)
+    .then(product => {
+      res.render('shop/product-detail', {
+        product: product,
+        pageTitle: product.title,
+        path: '/products'
+      });
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
 
-exports.getProduct = async (req, res, next) => {
-  //   console.log(req.params);
-  //   console.log("getproduct starts");
-  const detail = await fetchDetailProduct(req, res, next);
-  //   console.log(detail);
-  //   console.log("inside getProduct");
-  res.render("shop/product-detail", {
-    product: detail,
-    pageTitle: detail.title,
-    path: "/products",
-  });
+exports.getIndex = (req, res, next) => {
+  const page = +req.query.page || 1;
+  let totalItems;
+
+  Product.find()
+    .countDocuments()
+    .then(numProducts => {
+      totalItems = numProducts;
+      return Product.find()
+        .skip((page - 1) * ITEMS_PER_PAGE)
+        .limit(ITEMS_PER_PAGE);
+    })
+    .then(products => {
+      res.render('shop/index', {
+        prods: products,
+        pageTitle: 'Shop',
+        path: '/',
+        currentPage: page,
+        hasNextPage: ITEMS_PER_PAGE * page < totalItems,
+        hasPreviousPage: page > 1,
+        nextPage: page + 1,
+        previousPage: page - 1,
+        lastPage: Math.ceil(totalItems / ITEMS_PER_PAGE)
+      });
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
 
-exports.postCartAddProduct = async (req, res, next) => {
-  console.log("inside postCartAddProduct");
-  console.log(req.body);
-  const product = await findByIdCart(req, res, next);
-  product.quantity++;
-  const result = await product.save();
-  res.redirect("/cart");
+exports.getCart = (req, res, next) => {
+  req.user
+    .populate('cart.items.productId')
+    .execPopulate()
+    .then(user => {
+      const products = user.cart.items;
+      res.render('shop/cart', {
+        path: '/cart',
+        pageTitle: 'Your Cart',
+        products: products
+      });
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
 
-//left
+exports.postCart = (req, res, next) => {
+  const prodId = req.body.productId;
+  Product.findById(prodId)
+    .then(product => {
+      return req.user.addToCart(product);
+    })
+    .then(result => {
+      console.log(result);
+      res.redirect('/cart');
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
+};
+
+exports.postCartDeleteProduct = (req, res, next) => {
+  const prodId = req.body.productId;
+  req.user
+    .removeFromCart(prodId)
+    .then(result => {
+      res.redirect('/cart');
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
+};
+
+exports.postOrder = (req, res, next) => {
+  req.user
+    .populate('cart.items.productId')
+    .execPopulate()
+    .then(user => {
+      const products = user.cart.items.map(i => {
+        return { quantity: i.quantity, product: { ...i.productId._doc } };
+      });
+      const order = new Order({
+        user: {
+          email: req.user.email,
+          userId: req.user
+        },
+        products: products
+      });
+      return order.save();
+    })
+    .then(result => {
+      return req.user.clearCart();
+    })
+    .then(() => {
+      res.redirect('/orders');
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
+};
 
 exports.getOrders = (req, res, next) => {
-  res.render("./shop/orders", {
-    path: "/orders",
-    pageTitle: "Your Orders",
-  });
+  Order.find({ 'user.userId': req.user._id })
+    .then(orders => {
+      res.render('shop/orders', {
+        path: '/orders',
+        pageTitle: 'Your Orders',
+        orders: orders
+      });
+    })
+    .catch(err => {
+      const error = new Error(err);
+      error.httpStatusCode = 500;
+      return next(error);
+    });
 };
-exports.getCheckout = (req, res, next) => {
-  res.render("./shop/checkout", {
-    path: "/checkout",
-    pageTitle: "Checkout",
-  });
+
+exports.getInvoice = (req, res, next) => {
+  const orderId = req.params.orderId;
+  Order.findById(orderId)
+    .then(order => {
+      if (!order) {
+        return next(new Error('No order found.'));
+      }
+      if (order.user.userId.toString() !== req.user._id.toString()) {
+        return next(new Error('Unauthorized'));
+      }
+      const invoiceName = 'invoice-' + orderId + '.pdf';
+      const invoicePath = path.join('data', 'invoices', invoiceName);
+
+      const pdfDoc = new PDFDocument();
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        'inline; filename="' + invoiceName + '"'
+      );
+      pdfDoc.pipe(fs.createWriteStream(invoicePath));
+      pdfDoc.pipe(res);
+
+      pdfDoc.fontSize(26).text('Invoice', {
+        underline: true
+      });
+      pdfDoc.text('-----------------------');
+      let totalPrice = 0;
+      order.products.forEach(prod => {
+        totalPrice += prod.quantity * prod.product.price;
+        pdfDoc
+          .fontSize(14)
+          .text(
+            prod.product.title +
+              ' - ' +
+              prod.quantity +
+              ' x ' +
+              '$' +
+              prod.product.price
+          );
+      });
+      pdfDoc.text('---');
+      pdfDoc.fontSize(20).text('Total Price: $' + totalPrice);
+
+      pdfDoc.end();
+      // fs.readFile(invoicePath, (err, data) => {
+      //   if (err) {
+      //     return next(err);
+      //   }
+      //   res.setHeader('Content-Type', 'application/pdf');
+      //   res.setHeader(
+      //     'Content-Disposition',
+      //     'inline; filename="' + invoiceName + '"'
+      //   );
+      //   res.send(data);
+      // });
+      // const file = fs.createReadStream(invoicePath);
+
+      // file.pipe(res);
+    })
+    .catch(err => next(err));
 };
